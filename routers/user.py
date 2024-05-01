@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, Path
+from fastapi import APIRouter, HTTPException, Body
 from models.user import User
 from settings.dbconnection import db
 import subprocess, time, datetime, json
@@ -6,7 +6,7 @@ import subprocess, time, datetime, json
 router = APIRouter()
 #ACCESS
 @router.post('/users/')
-def get_products_by_stock(user: str, passwd: str = Query(min_length=8, max_length=255)):
+def get_products_by_stock(user: str = Body(min_length=8, max_length=255), passwd: str = Body(min_length=8, max_length=255)):
 	conn = db()
 	cursorObj = conn.cursor(dictionary=True)
 	sql="SELECT id FROM users WHERE email=%s AND passwd=%s"
@@ -48,7 +48,7 @@ def create_product(token: str, user: User):
 	conn.close()
 	return {"user": cursorObj.lastrowid}
 #UPDATE
-@router.put('/users/{id}')
+@router.put('/users/')
 def update_user(token: str, id: int, user: User):
 	conn = db()
 	cursorObj = conn.cursor(dictionary=True)
@@ -76,8 +76,8 @@ def get_users():
 	conn.close()
 	return myresult
 #DELETE
-@router.delete('/users/{id}')
-def del_user(token: str, id: int = Path(gt=0)):
+@router.delete('/users/')
+def del_user(token: str =Body(), id: int = Body(gt=0)):
 	conn = db()
 	cursorObj = conn.cursor(dictionary=True)
 	sql="SELECT level, date FROM users WHERE token=%s"
@@ -94,7 +94,6 @@ def del_user(token: str, id: int = Path(gt=0)):
 	conn.commit()
 	conn.close()
 	return {"user": id}
-
 
 #SERVICIOS
 @router.get('/users/amounts')
