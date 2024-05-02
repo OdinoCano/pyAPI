@@ -1,98 +1,103 @@
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, Header
 from models.transaction import Transaction
 from settings.dbconnection import db
-import subprocess, time, datetime, json
+from settings.cryptography import encrypt, decrypt
+from datetime import datetime
+import subprocess, time, datetime, json, requests
 
 router = APIRouter()
 
 @router.get('/transactions')
-def get_transactions():
+def get_transactions(token: str = Header()):
 	conn = db()
 	cursorObj = conn.cursor(dictionary=True)
-	cursorObj.execute("SELECT t.id, t.concept, t.date, if(t.io=0,'INGRESS','EGRESS') as io, c.name as category, price FROM transactions t left join categories c ON c.id=t.category")
-	myresult = cursorObj.fetchall()
-	conn.close()
-	return myresult
-	
-@router.get('/transactions/total')
-def get_total():
-	conn = db()
-	cursorObj = conn.cursor(dictionary=True)
-	cursorObj.execute("select SUM(IF(io=0,price,0)) as ingress, SUM(IF(io=1,price,0)) as egress from transactions")
-	myresult = cursorObj.fetchall()
-	conn.close()
-	return myresult
-
-@router.get('/transactions/amounts')
-def get_amounts(token: str):
-	conn = db()
-	cursorObj = conn.cursor(dictionary=True)
-	sql="SELECT id FROM users WHERE token=%s"
+	sql = "SELECT u.id, u.date, a.userid, a.passwdid, linkid FROM users u LEFT JOIN apikeys a ON a.user=u.id LEFT JOIN links l ON l.apikeys=a.id WHERE u.token=%s"
 	adr = (token, )
 	cursorObj.execute(sql, adr)
-	myresult = cursorObj.fetchone()
-	if not myresult:
-		conn.close()
-		raise HTTPException(status_code=404, detail="Access not found")
-	sql="select c.name as category, t.price from transactions t left join categories c ON c.id=t.category order by category"
-	cursorObj.execute(sql)
 	myresult = cursorObj.fetchall()
+	now = time.time()
 	conn.close()
-	return myresult
-
+	if not myresult or myresult[0]["date"] < now:
+		raise HTTPException(status_code=401, detail="Access not found")
+	session = requests.Session()
+	url="https://sandbox.belvo.com/api/transactions/?link="
+	s = []
+	for x in myresult:
+		session.auth = (decrypt(x["userid"]),decrypt(x["passwdid"]))
+		r = session.get(url+x["linkid"])
+		if r.status_code>=200 and r.status_code < 300:
+			s.append(json.loads(r.content))
+	return s
 #SERVICIOS
-@router.get('/transactions/amounts')
-def get_amounts(token: str = Body()):
+@router.get('/transactions/total')
+def get_total(token: str = Header()):
 	conn = db()
 	cursorObj = conn.cursor(dictionary=True)
-	sql="SELECT id, date FROM users WHERE token=%s"
+	sql = "SELECT u.id, u.date, a.userid, a.passwdid, linkid FROM users u LEFT JOIN apikeys a ON a.user=u.id LEFT JOIN links l ON l.apikeys=a.id WHERE u.token=%s"
 	adr = (token, )
-	cursorObj.execute(sql, adr)
-	myresult = cursorObj.fetchone()
-	now = time.time()
-	if not myresult or myresult["date"] < now:
-		conn.close()
-		raise HTTPException(status_code=404, detail="Access not found")
-	sql="select c.name as category, t.price from transactions t left join categories c ON c.id=t.category WHERE user=%s order by category"
-	adr = (myresult["id"], )
 	cursorObj.execute(sql, adr)
 	myresult = cursorObj.fetchall()
+	now = time.time()
 	conn.close()
-	return myresult
+	if not myresult or myresult[0]["date"] < now:
+		raise HTTPException(status_code=401, detail="Access not found")
+	session = requests.Session()
+	url="https://sandbox.belvo.com/api/transactions/?link="
+	s = 0.0
+	for x in myresult:
+		session.auth = (decrypt(x["userid"]),decrypt(x["passwdid"]))
+		r = session.get(url+x["linkid"])
+		if r.status_code>=200 and r.status_code < 300:
+			i=json.loads(r.content)
+			for y in i["results"]:
+				s += y["balance"]
+	return s
+@router.get('/transactions/amounts')
+def get_amounts(token: str = Header()):
+	conn = db()
+	cursorObj = conn.cursor(dictionary=True)
+	sql = "SELECT u.id, u.date, a.userid, a.passwdid, linkid FROM users u LEFT JOIN apikeys a ON a.user=u.id LEFT JOIN links l ON l.apikeys=a.id WHERE u.token=%s"
+	adr = (token, )
+	cursorObj.execute(sql, adr)
+	myresult = cursorObj.fetchall()
+	now = time.time()
+	conn.close()
+	if not myresult or myresult[0]["date"] < now:
+		raise HTTPException(status_code=401, detail="Access not found")
+	session = requests.Session()
+	url="https://sandbox.belvo.com/api/transactions/?link="
+	s = 0.0
+	for x in myresult:
+		session.auth = (decrypt(x["userid"]),decrypt(x["passwdid"]))
+		r = session.get(url+x["linkid"])
+		if r.status_code>=200 and r.status_code < 300:
+			i=json.loads(r.content)
+			for y in i["results"]:
+				s += y["amount"]
+	return s
 @router.get('/transactions/financial_health')
-def get_financial_health(token: str = Body()):
+def get_financial_health(token: str = Header()):
 	conn = db()
 	cursorObj = conn.cursor(dictionary=True)
-	sql="SELECT id, date FROM users WHERE token=%s"
+	sql = "SELECT u.id, u.date, a.userid, a.passwdid, linkid FROM users u LEFT JOIN apikeys a ON a.user=u.id LEFT JOIN links l ON l.apikeys=a.id WHERE u.token=%s"
 	adr = (token, )
 	cursorObj.execute(sql, adr)
-	myresult = cursorObj.fetchone()
+	myresult = cursorObj.fetchall()
 	now = time.time()
-	if not myresult or myresult["date"] < now:
-		conn.close()
-		raise HTTPException(status_code=404, detail="Access not found")
-	sql="select SUM(IF(io=0,price,0)) as ingress, SUM(IF(io=1,price,0)) as egress from transactions WHERE user=%s"
-	adr = (myresult["id"], )
-	cursorObj.execute(sql, adr)
-	myresult = cursorObj.fetchone()
-	health = myresult["ingress"] > myresult["egress"]
 	conn.close()
-	return {"ingress": myresult["ingress"], "egress": myresult["egress"], "health": health}
-@router.get('/transactions/total')
-def get_total(token: str = Body()):
-	conn = db()
-	cursorObj = conn.cursor(dictionary=True)
-	sql="SELECT id, date FROM users WHERE token=%s"
-	adr = (token, )
-	cursorObj.execute(sql, adr)
-	myresult = cursorObj.fetchone()
-	now = time.time()
-	if not myresult or myresult["date"] < now:
-		conn.close()
-		raise HTTPException(status_code=404, detail="Access not found")
-	sql="select SUM(IF(io=0,price,0)) as ingress, SUM(IF(io=1,price,0)) as egress from transactions WHERE user=%s"
-	adr = (myresult["id"], )
-	cursorObj.execute(sql, adr)
-	myresult = cursorObj.fetchone()
-	conn.close()
-	return myresult
+	if not myresult or myresult[0]["date"] < now:
+		raise HTTPException(status_code=401, detail="Access not found")
+	session = requests.Session()
+	url="https://sandbox.belvo.com/api/transactions/?link="
+	s = 0.0
+	a = 0.0
+	for x in myresult:
+		session.auth = (decrypt(x["userid"]),decrypt(x["passwdid"]))
+		r = session.get(url+x["linkid"])
+		if r.status_code>=200 and r.status_code < 300:
+			i=json.loads(r.content)
+			for y in i["results"]:
+				s += y["balance"]
+				a += y["amount"]
+	health = s > a
+	return {"ingress": s, "egress": a, "health": health}

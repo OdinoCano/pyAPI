@@ -48,7 +48,7 @@ def create_product(token: str = Body(), link: Link = Body()):
 	cursorObj.execute(sql, adr)
 	conn.commit()
 	conn.close()
-	return {"user": cursorObj.lastrowid}
+	return {"link": cursorObj.lastrowid}
 #UPDATE
 @router.put('/links/')
 def update_user(token: str = Body(), id: int = Body(), link: Link = Body()):
@@ -67,7 +67,7 @@ def update_user(token: str = Body(), id: int = Body(), link: Link = Body()):
 	cursorObj.execute(sql, adr)
 	conn.commit()
 	conn.close()
-	return {"user": id}
+	return {"link": id}
 #READ
 @router.get('/links')
 def get_users(token: str = Header()):
@@ -96,11 +96,10 @@ def get_users(token: str = Header()):
 #DELETE
 @router.delete('/links/')
 def del_user(token: str =Body(), id: int = Body(gt=0)):
-	
 	conn = db()
 	cursorObj = conn.cursor(dictionary=True)
-	sql="SELECT id, date FROM users WHERE token=%s"
-	adr = (token, )
+	sql="SELECT u.id, u.date, a.userid, a.passwdid, linkid FROM users u LEFT JOIN apikeys a ON a.user=u.id LEFT JOIN links l ON l.apikeys=a.id WHERE u.token=%s AND l.id=%s"
+	adr = (token, id)
 	cursorObj.execute(sql, adr)
 	myresult = cursorObj.fetchone()
 	now = time.time()
@@ -108,10 +107,23 @@ def del_user(token: str =Body(), id: int = Body(gt=0)):
 		conn.close()
 		raise HTTPException(status_code=401, detail="Access not found")
 	session = requests.Session()
-	
-	sql="DELETE FROM users WHERE id=%s"
-	adr = (id, )
-	cursorObj.execute(sql, adr)
-	conn.commit()
+	url = "https://sandbox.belvo.com/api/links/"
+	session.auth = (decrypt(myresult["userid"]),decrypt(myresult["passwdid"]))
+	r = session.get(url)
+	if r.status_code<200 and r.status_code>299:
+		conn.close()
+		raise HTTPException(status_code=404, detail="Server not found")
+	s = json.loads(r.content)
+	for x in s["results"]:
+		if x["id"] == myresult["linkid"]:
+			url += x["id"]
+			r = session.delete(url)
+			if r.status_code<200 and r.status_code>299:
+				conn.close()
+				raise HTTPException(status_code=404, detail="Server not found")
+			sql="DELETE FROM links WHERE id=%s"
+			adr = (id, )
+			cursorObj.execute(sql, adr)
+			conn.commit()
 	conn.close()
-	return {"user": id}
+	return {"link": url}
